@@ -91,7 +91,7 @@ FROM term_ids t
 JOIN course_ids c ON TRUE
 JOIN one_instructor i ON TRUE;
 
--- 6b) Spring offerings (7) - FIXED instructor assignment (no bytea subscripting)
+-- 6b) Spring offerings (7) - instructor assignment via row_number()
 WITH term_ids AS (
   SELECT (SELECT term_id FROM terms WHERE name='2026 Spring') AS spring_id
 ),
@@ -120,40 +120,38 @@ SELECT
 FROM term_ids t
 JOIN ranked_courses rc ON TRUE;
 
--- 7) Schedule sessions (>= 10).
+-- 7) Schedule sessions (>= 10) - WITHOUT location column
 -- We'll add 2 sessions per offering (so 20 sessions total for 10 offerings)
 
-INSERT INTO schedule_sessions (offering_id, day_of_week, start_time, end_time, location)
+INSERT INTO schedule_sessions (offering_id, day_of_week, start_time, end_time)
 SELECT
   o.offering_id,
   CASE WHEN (o.offering_id % 2)=0 THEN 2 ELSE 4 END AS day_of_week,          -- Tue/Thu
   CASE WHEN (o.offering_id % 3)=0 THEN TIME '10:00' ELSE TIME '14:00' END,   -- 10:00 or 14:00
-  CASE WHEN (o.offering_id % 3)=0 THEN TIME '11:30' ELSE TIME '15:30' END,
-  'Room ' || (100 + o.offering_id)::text
+  CASE WHEN (o.offering_id % 3)=0 THEN TIME '11:30' ELSE TIME '15:30' END
 FROM course_offerings o;
 
-INSERT INTO schedule_sessions (offering_id, day_of_week, start_time, end_time, location)
+INSERT INTO schedule_sessions (offering_id, day_of_week, start_time, end_time)
 SELECT
   o.offering_id,
   CASE WHEN (o.offering_id % 2)=0 THEN 3 ELSE 5 END AS day_of_week,          -- Wed/Fri
   CASE WHEN (o.offering_id % 3)=0 THEN TIME '10:00' ELSE TIME '14:00' END,
-  CASE WHEN (o.offering_id % 3)=0 THEN TIME '11:30' ELSE TIME '15:30' END,
-  'Room ' || (200 + o.offering_id)::text
+  CASE WHEN (o.offering_id % 3)=0 THEN TIME '11:30' ELSE TIME '15:30' END
 FROM course_offerings o;
 
 -- 8) Enrollments (>= 60)
 -- Strategy:
--- - Create completed records in 2025 Fall for CS101 + MATH101 (students 1..20)
--- - Create many Spring enrollments, plus some completed Spring with grades (for pass rate)
--- - Create intentional prerequisite violations in Spring (so violations query returns rows)
+-- - Completed records in 2025 Fall for CS101 + MATH101 (students 1..20)
+-- - Many Spring enrollments, plus some completed Spring with grades (for pass rate)
+-- - Intentional prerequisite violations in Spring (so violations query returns rows)
 
+-- 8a) Fall completed (students 1..20 complete CS101 + MATH101 with grades)
 WITH off AS (
   SELECT o.offering_id, t.name AS term, c.course_code
   FROM course_offerings o
   JOIN terms t ON t.term_id = o.term_id
   JOIN courses c ON c.course_id = o.course_id
 )
--- 8a) Fall completed (students 1..20 complete CS101 + MATH101 with grades)
 INSERT INTO enrollments (offering_id, student_id, status, final_grade)
 SELECT
   o.offering_id,
