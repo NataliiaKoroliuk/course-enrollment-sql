@@ -6,16 +6,6 @@
    - completed courses have final_grade NOT NULL (in our data)
    ========================================================= */
 
--- Helper CTE: latest term
-WITH latest_term AS (
-  SELECT term_id, name, start_date, end_date
-  FROM terms
-  ORDER BY start_date DESC
-  LIMIT 1
-)
-SELECT * FROM latest_term;
-
-
 -- =========================================================
 -- Q1) List courses with the highest enrolment in the last term
 -- (time window = latest term by start_date)
