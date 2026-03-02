@@ -19,25 +19,25 @@ INSERT INTO terms (name, start_date, end_date) VALUES
 
 -- 2) Instructors (>= 6)
 INSERT INTO instructors (full_name, email) VALUES
-('Dr. Alice Brown', 'alice.brown@uni.edu'),
-('Dr. Bob Smith',   'bob.smith@uni.edu'),
-('Dr. Carol Lee',   'carol.lee@uni.edu'),
-('Dr. David Kim',   'david.kim@uni.edu'),
-('Dr. Emma Davis',  'emma.davis@uni.edu'),
-('Dr. Frank Miller','frank.miller@uni.edu');
+('Dr. Alice Brown',  'alice.brown@uni.edu'),
+('Dr. Bob Smith',    'bob.smith@uni.edu'),
+('Dr. Carol Lee',    'carol.lee@uni.edu'),
+('Dr. David Kim',    'david.kim@uni.edu'),
+('Dr. Emma Davis',   'emma.davis@uni.edu'),
+('Dr. Frank Miller', 'frank.miller@uni.edu');
 
 -- 3) Courses (>= 8)
 INSERT INTO courses (course_code, title, credits) VALUES
-('CS101',  'Intro to Programming', 3),
-('CS102',  'Data Structures', 4),
-('CS201',  'Databases', 3),
-('CS202',  'Computer Networks', 3),
-('MATH101','Calculus I', 4),
-('STAT201','Statistics', 3),
-('BUS101', 'Business Fundamentals', 3),
-('ENG101', 'Academic Writing', 2),
-('DS301',  'Product Analytics', 3),
-('AI210',  'AI in Business', 3);
+('CS101',   'Intro to Programming', 3),
+('CS102',   'Data Structures', 4),
+('CS201',   'Databases', 3),
+('CS202',   'Computer Networks', 3),
+('MATH101', 'Calculus I', 4),
+('STAT201', 'Statistics', 3),
+('BUS101',  'Business Fundamentals', 3),
+('ENG101',  'Academic Writing', 2),
+('DS301',   'Product Analytics', 3),
+('AI210',   'AI in Business', 3);
 
 -- 4) Prerequisites (modelled)
 -- CS102 requires CS101
@@ -63,58 +63,66 @@ SELECT
 FROM generate_series(1, 40) AS gs;
 
 -- 6) Course offerings (10 offerings across 2 terms)
--- We'll create 3 offerings in 2025 Fall and 7 offerings in 2026 Spring (latest term)
-WITH term_ids AS (
-  SELECT
-    (SELECT term_id FROM terms WHERE name='2025 Fall')   AS fall_id,
-    (SELECT term_id FROM terms WHERE name='2026 Spring') AS spring_id
-),
-course_ids AS (
-  SELECT course_code, course_id FROM courses
-),
-inst AS (
-  SELECT instructor_id, full_name FROM instructors
-)
-INSERT INTO course_offerings (course_id, term_id, instructor_id, capacity)
-SELECT c.course_id, t.fall_id, i.instructor_id, cap.capacity
-FROM term_ids t
-JOIN course_ids c ON c.course_code IN ('CS101','MATH101','ENG101')
-JOIN LATERAL (
-  SELECT instructor_id FROM inst ORDER BY instructor_id LIMIT 1
-) i ON TRUE
-JOIN LATERAL (
-  SELECT CASE
-    WHEN c.course_code='CS101' THEN 20
-    WHEN c.course_code='MATH101' THEN 15
-    ELSE 25
-  END AS capacity
-) cap ON TRUE;
+-- 3 offerings in 2025 Fall and 7 offerings in 2026 Spring (latest term)
 
--- Spring offerings (7)
+-- 6a) Fall offerings (3)
 WITH term_ids AS (
-  SELECT (SELECT term_id FROM terms WHERE name='2026 Spring') AS spring_id
+  SELECT (SELECT term_id FROM terms WHERE name='2025 Fall') AS fall_id
 ),
 course_ids AS (
-  SELECT course_code, course_id FROM courses
+  SELECT course_code, course_id
+  FROM courses
+  WHERE course_code IN ('CS101','MATH101','ENG101')
 ),
-inst AS (
-  SELECT instructor_id FROM instructors
+one_instructor AS (
+  SELECT instructor_id FROM instructors ORDER BY instructor_id LIMIT 1
 )
 INSERT INTO course_offerings (course_id, term_id, instructor_id, capacity)
 SELECT
   c.course_id,
-  t.spring_id,
-  ((c.course_code::bytea)[1] % 6 + 1)::int, -- deterministic-ish instructor_id 1..6
+  t.fall_id,
+  i.instructor_id,
   CASE
-    WHEN c.course_code IN ('CS102','CS201') THEN 18
-    WHEN c.course_code IN ('STAT201','DS301') THEN 16
+    WHEN c.course_code='CS101' THEN 20
+    WHEN c.course_code='MATH101' THEN 15
+    ELSE 25
+  END AS capacity
+FROM term_ids t
+JOIN course_ids c ON TRUE
+JOIN one_instructor i ON TRUE;
+
+-- 6b) Spring offerings (7) - FIXED instructor assignment (no bytea subscripting)
+WITH term_ids AS (
+  SELECT (SELECT term_id FROM terms WHERE name='2026 Spring') AS spring_id
+),
+course_ids AS (
+  SELECT course_code, course_id
+  FROM courses
+  WHERE course_code IN ('CS101','CS102','CS201','STAT201','BUS101','DS301','AI210')
+),
+ranked_courses AS (
+  SELECT
+    course_id,
+    course_code,
+    ROW_NUMBER() OVER (ORDER BY course_code) AS rn
+  FROM course_ids
+)
+INSERT INTO course_offerings (course_id, term_id, instructor_id, capacity)
+SELECT
+  rc.course_id,
+  t.spring_id,
+  ((rc.rn - 1) % 6 + 1) AS instructor_id,  -- cycles 1..6
+  CASE
+    WHEN rc.course_code IN ('CS102','CS201') THEN 18
+    WHEN rc.course_code IN ('STAT201','DS301') THEN 16
     ELSE 22
   END AS capacity
 FROM term_ids t
-JOIN course_ids c ON c.course_code IN ('CS101','CS102','CS201','STAT201','BUS101','DS301','AI210');
+JOIN ranked_courses rc ON TRUE;
 
--- 7) Schedule sessions (>= 10). We'll add 2 sessions per offering in Spring (and 2 in Fall)
--- Day_of_week: 1=Mon ... 7=Sun
+-- 7) Schedule sessions (>= 10).
+-- We'll add 2 sessions per offering (so 20 sessions total for 10 offerings)
+
 INSERT INTO schedule_sessions (offering_id, day_of_week, start_time, end_time, location)
 SELECT
   o.offering_id,
@@ -134,30 +142,18 @@ SELECT
 FROM course_offerings o;
 
 -- 8) Enrollments (>= 60)
--- We'll:
--- - Put many students into Spring offerings (latest term)
--- - Create some completed grades in Fall so prerequisites can be satisfied for some
+-- Strategy:
+-- - Create completed records in 2025 Fall for CS101 + MATH101 (students 1..20)
+-- - Create many Spring enrollments, plus some completed Spring with grades (for pass rate)
 -- - Create intentional prerequisite violations in Spring (so violations query returns rows)
 
--- Helper: IDs
-WITH ids AS (
-  SELECT
-    (SELECT term_id FROM terms WHERE name='2025 Fall') AS fall_id,
-    (SELECT term_id FROM terms WHERE name='2026 Spring') AS spring_id
-),
-off AS (
+WITH off AS (
   SELECT o.offering_id, t.name AS term, c.course_code
   FROM course_offerings o
   JOIN terms t ON t.term_id = o.term_id
   JOIN courses c ON c.course_id = o.course_id
-),
-students_1_25 AS (
-  SELECT student_id FROM students WHERE student_id BETWEEN 1 AND 25
-),
-students_26_40 AS (
-  SELECT student_id FROM students WHERE student_id BETWEEN 26 AND 40
 )
--- 8a) Fall completed: Students 1..20 complete CS101 + MATH101 with grades (so they can take CS102 etc.)
+-- 8a) Fall completed (students 1..20 complete CS101 + MATH101 with grades)
 INSERT INTO enrollments (offering_id, student_id, status, final_grade)
 SELECT
   o.offering_id,
@@ -168,7 +164,13 @@ FROM off o
 JOIN students s ON s.student_id BETWEEN 1 AND 20
 WHERE o.term='2025 Fall' AND o.course_code IN ('CS101','MATH101');
 
--- 8b) Spring enrolled: Students 1..30 enroll into CS102, CS201, STAT201, BUS101 (enough volume)
+-- 8b) Spring enrolled: students 1..30 enroll into CS101, CS102, STAT201, BUS101
+WITH off AS (
+  SELECT o.offering_id, t.name AS term, c.course_code
+  FROM course_offerings o
+  JOIN terms t ON t.term_id = o.term_id
+  JOIN courses c ON c.course_id = o.course_id
+)
 INSERT INTO enrollments (offering_id, student_id, status, final_grade)
 SELECT
   o.offering_id,
@@ -177,10 +179,16 @@ SELECT
   NULL::numeric
 FROM off o
 JOIN students s ON s.student_id BETWEEN 1 AND 30
-WHERE o.term='2026 Spring' AND o.course_code IN ('CS101','CS102','STAT201','BUS101');
+WHERE o.term='2026 Spring' AND o.course_code IN ('CS101','CS102','STAT201','BUS101')
+ON CONFLICT DO NOTHING;
 
--- 8c) Spring: create some completed grades for STAT201 and BUS101 (for pass rate stats)
--- Students 1..15 complete STAT201 and BUS101 in Spring
+-- 8c) Spring completed: students 1..15 complete STAT201 and BUS101 with grades
+WITH off AS (
+  SELECT o.offering_id, t.name AS term, c.course_code
+  FROM course_offerings o
+  JOIN terms t ON t.term_id = o.term_id
+  JOIN courses c ON c.course_id = o.course_id
+)
 INSERT INTO enrollments (offering_id, student_id, status, final_grade)
 SELECT
   o.offering_id,
@@ -193,8 +201,13 @@ WHERE o.term='2026 Spring' AND o.course_code IN ('STAT201','BUS101')
 ON CONFLICT (offering_id, student_id) DO UPDATE
 SET status='completed', final_grade=EXCLUDED.final_grade;
 
--- 8d) Spring: DS301 and AI210 enrollments (some will be violations if prerequisites not met)
--- Students 10..35 enroll DS301 and AI210
+-- 8d) Spring: DS301 and AI210 enrollments (some will violate prereqs)
+WITH off AS (
+  SELECT o.offering_id, t.name AS term, c.course_code
+  FROM course_offerings o
+  JOIN terms t ON t.term_id = o.term_id
+  JOIN courses c ON c.course_id = o.course_id
+)
 INSERT INTO enrollments (offering_id, student_id, status, final_grade)
 SELECT
   o.offering_id,
@@ -206,8 +219,13 @@ JOIN students s ON s.student_id BETWEEN 10 AND 35
 WHERE o.term='2026 Spring' AND o.course_code IN ('DS301','AI210')
 ON CONFLICT DO NOTHING;
 
--- 8e) Spring: CS201 enrollments (requires CS102, which requires CS101)
--- Students 5..28 enroll into CS201 (some will violate prerequisites intentionally)
+-- 8e) Spring: CS201 enrollments (requires CS102 which requires CS101)
+WITH off AS (
+  SELECT o.offering_id, t.name AS term, c.course_code
+  FROM course_offerings o
+  JOIN terms t ON t.term_id = o.term_id
+  JOIN courses c ON c.course_id = o.course_id
+)
 INSERT INTO enrollments (offering_id, student_id, status, final_grade)
 SELECT
   o.offering_id,
