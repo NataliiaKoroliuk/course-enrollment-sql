@@ -171,3 +171,105 @@ LEFT JOIN passed_prereqs pp
  AND pp.course_id  = rp.prereq_course_id
 WHERE pp.student_id IS NULL
 ORDER BY term, enrolled_course, student_id, missing_prereq;
+
+-- Q5) Students with schedule conflicts (overlapping sessions) in the latest term
+WITH latest_term AS (
+  SELECT term_id, name
+  FROM terms
+  ORDER BY start_date DESC
+  LIMIT 1
+),
+enrolled_offerings AS (
+  SELECT
+    e.student_id,
+    o.offering_id
+  FROM enrollments e
+  JOIN course_offerings o ON o.offering_id = e.offering_id
+  JOIN latest_term lt ON lt.term_id = o.term_id
+  WHERE e.status = 'enrolled'
+),
+sessions AS (
+  SELECT
+    eo.student_id,
+    ss.offering_id,
+    ss.day_of_week,
+    ss.start_time,
+    ss.end_time
+  FROM enrolled_offerings eo
+  JOIN schedule_sessions ss ON ss.offering_id = eo.offering_id
+),
+conflicts AS (
+  SELECT
+    s1.student_id,
+    s1.day_of_week,
+    s1.offering_id AS offering_1,
+    s2.offering_id AS offering_2,
+    s1.start_time AS start_1,
+    s1.end_time   AS end_1,
+    s2.start_time AS start_2,
+    s2.end_time   AS end_2
+  FROM sessions s1
+  JOIN sessions s2
+    ON s1.student_id = s2.student_id
+   AND s1.day_of_week = s2.day_of_week
+   AND s1.offering_id < s2.offering_id
+   -- overlap condition:
+   AND s1.start_time < s2.end_time
+   AND s2.start_time < s1.end_time
+)
+SELECT
+  lt.name AS term,
+  c.student_id,
+  st.first_name,
+  st.last_name,
+  st.email,
+  c.day_of_week,
+  c1.course_code AS course_1,
+  c2.course_code AS course_2,
+  c.start_1, c.end_1,
+  c.start_2, c.end_2
+FROM conflicts c
+JOIN latest_term lt ON TRUE
+JOIN students st ON st.student_id = c.student_id
+JOIN course_offerings o1 ON o1.offering_id = c.offering_1
+JOIN course_offerings o2 ON o2.offering_id = c.offering_2
+JOIN courses c1 ON c1.course_id = o1.course_id
+JOIN courses c2 ON c2.course_id = o2.course_id
+ORDER BY st.student_id, c.day_of_week, c.start_1;
+
+
+-- Q6) Courses at/over capacity in the latest term (operational)
+WITH latest_term AS (
+  SELECT term_id, name
+  FROM terms
+  ORDER BY start_date DESC
+  LIMIT 1
+),
+enrolled_counts AS (
+  SELECT
+    o.offering_id,
+    COUNT(*) FILTER (WHERE e.status = 'enrolled') AS enrolled_now
+  FROM course_offerings o
+  LEFT JOIN enrollments e ON e.offering_id = o.offering_id
+  GROUP BY o.offering_id
+)
+SELECT
+  lt.name AS term,
+  c.course_code,
+  c.title,
+  i.full_name AS instructor,
+  o.capacity,
+  ec.enrolled_now,
+  (o.capacity - ec.enrolled_now) AS seats_left,
+  CASE
+    WHEN ec.enrolled_now >= o.capacity THEN 'AT/OVER CAPACITY'
+    WHEN ec.enrolled_now >= o.capacity - 2 THEN 'NEAR CAPACITY'
+    ELSE 'OK'
+  END AS capacity_status
+FROM latest_term lt
+JOIN course_offerings o ON o.term_id = lt.term_id
+JOIN courses c ON c.course_id = o.course_id
+JOIN instructors i ON i.instructor_id = o.instructor_id
+JOIN enrolled_counts ec ON ec.offering_id = o.offering_id
+ORDER BY seats_left ASC, c.course_code;
+
