@@ -1,15 +1,10 @@
 /* =========================================================
    REQUIRED QUERIES — Course Enrolment System
-   Assumptions:
-   - terms.name contains '2026 Spring' as latest term
-   - enrollments.status in ('enrolled','completed','dropped')
-   - completed courses have final_grade NOT NULL (in our data)
    ========================================================= */
 
--- =========================================================
--- Q1) List courses with the highest enrolment in the last term
--- (time window = latest term by start_date)
--- =========================================================
+/* =========================================================
+   Q1) List courses with the highest enrolment in the last term/semester (define the time window)
+   ========================================================= */
 WITH latest_term AS (
   SELECT term_id
   FROM terms
@@ -33,11 +28,9 @@ GROUP BY t.name, c.course_code, c.title
 ORDER BY total_enrollments DESC, c.course_code;
 
 
--- =========================================================
--- Q2) Find instructors teaching the most credit-hours in the term
--- Credit-hours = SUM(course credits) across offerings in latest term
--- (also show #offerings and #sessions)
--- =========================================================
+/* =========================================================
+   Q2) Find instructors teaching the most credit-hours in the term
+   ========================================================= */
 WITH latest_term AS (
   SELECT term_id
   FROM terms
@@ -65,11 +58,9 @@ GROUP BY t.name, i.full_name
 ORDER BY total_credit_hours DESC, total_sessions DESC, instructor;
 
 
--- =========================================================
--- Q3) Compute pass rates / grade distributions per course (if modeled)
--- Definition: pass = final_grade >= 60, based on COMPLETED enrollments
--- (latest term)
--- =========================================================
+/* =========================================================
+   Q3) Compute pass rates / grade distributions per course (if modeled).
+   ========================================================= */
 WITH latest_term AS (
   SELECT term_id
   FROM terms
@@ -92,7 +83,6 @@ SELECT
   title,
   COUNT(*) AS completed_count,
   ROUND(100.0 * AVG(CASE WHEN final_grade >= 60 THEN 1 ELSE 0 END), 2) AS pass_rate_pct,
-  -- simple grade distribution buckets
   COUNT(*) FILTER (WHERE final_grade >= 90) AS a_90_100,
   COUNT(*) FILTER (WHERE final_grade >= 80 AND final_grade < 90) AS b_80_89,
   COUNT(*) FILTER (WHERE final_grade >= 70 AND final_grade < 80) AS c_70_79,
@@ -104,14 +94,9 @@ GROUP BY course_code, title
 ORDER BY completed_count DESC, course_code;
 
 
--- =========================================================
--- Q4) Detect prerequisite violations
--- Students enrolled in a course offering but have NOT completed
--- the prerequisite course with a passing grade (>=60).
---
--- Works for direct prerequisites (course_prerequisites).
--- Window: latest term enrollments with status 'enrolled' or 'completed'
--- =========================================================
+/* =========================================================
+   Q4) Detect prerequisite violations (students enrolled without meeting prerequisites), if modeled.
+   ========================================================= */
 WITH latest_term AS (
   SELECT term_id
   FROM terms
@@ -172,7 +157,10 @@ LEFT JOIN passed_prereqs pp
 WHERE pp.student_id IS NULL
 ORDER BY term, enrolled_course, student_id, missing_prereq;
 
--- Q5) Students with schedule conflicts (overlapping sessions) in the latest term
+
+/* =========================================================
+   Q5) Find students with schedule conflicts (overlapping sessions).
+   ========================================================= */
 WITH latest_term AS (
   SELECT term_id, name
   FROM terms
@@ -213,7 +201,6 @@ conflicts AS (
     ON s1.student_id = s2.student_id
    AND s1.day_of_week = s2.day_of_week
    AND s1.offering_id < s2.offering_id
-   -- overlap condition:
    AND s1.start_time < s2.end_time
    AND s2.start_time < s1.end_time
 )
@@ -238,7 +225,9 @@ JOIN courses c2 ON c2.course_id = o2.course_id
 ORDER BY st.student_id, c.day_of_week, c.start_1;
 
 
--- Q6) Courses at/over capacity in the latest term (operational)
+/* =========================================================
+   Q6) Show courses with the longest waitlist (if modeled) OR courses at/over capacity.
+   ========================================================= */
 WITH latest_term AS (
   SELECT term_id, name
   FROM terms
@@ -272,4 +261,3 @@ JOIN courses c ON c.course_id = o.course_id
 JOIN instructors i ON i.instructor_id = o.instructor_id
 JOIN enrolled_counts ec ON ec.offering_id = o.offering_id
 ORDER BY seats_left ASC, c.course_code;
-
