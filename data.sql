@@ -140,10 +140,6 @@ SELECT
 FROM course_offerings o;
 
 -- 8) Enrollments (>= 60)
--- Strategy:
--- - Completed records in 2025 Fall for CS101 + MATH101 (students 1..20)
--- - Many Spring enrollments, plus some completed Spring with grades (for pass rate)
--- - Intentional prerequisite violations in Spring (so violations query returns rows)
 
 -- 8a) Fall completed (students 1..20 complete CS101 + MATH101 with grades)
 WITH off AS (
