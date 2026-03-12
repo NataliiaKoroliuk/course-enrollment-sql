@@ -1,4 +1,4 @@
-# LLM Usage Log
+# LLM Usage
 
 ## Tool
 ChatGPT (OpenAI)
